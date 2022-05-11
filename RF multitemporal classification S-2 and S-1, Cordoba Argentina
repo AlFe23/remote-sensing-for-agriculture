@@ -1,3 +1,9 @@
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 //----------- RF Multitemporal classification with Sentinel-2 and Sentinel-1 acquisitions-----------------------
 //------------------------- VERANO 2020-----------------------------
 //--------- Cordoba periurban agricultural area POL4  --------------
@@ -249,18 +255,6 @@ print(areas);
 
 var dl_geometry = s2.geometry();
 Map.addLayer(dl_geometry, {color: 'white', strokeWidth: 5}, 'dl_geometry', true, 0.6);
-
-/*
-//-------------------DOWNLOAD MAPPA CLASSIFICAZIONE-----------------------------
-
-Export.image.toDrive({
-  image: classifiedRf,
-  description: 'pol4_cc_B2_B12_verano_cl020_tile',
-  scale: 10,
-  maxPixels: 1e13,
-  //region: aoi,
-  region: dl_geometry,
-  folder: 'CROP_CLASSIFICATION_MAPS_ARGENTINA',
-  fileNamePrefix: 'pol4_cc_B2_B12_verano_cl020_tile'
-});
-*/
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
