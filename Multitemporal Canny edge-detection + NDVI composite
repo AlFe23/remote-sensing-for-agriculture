@@ -1,0 +1,252 @@
+
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
+
+//////////////////////////////////////////////////////////////////////7
+//--------Edge detection con Canny multitemporale --------//
+//------------------------- VERANO 2020-----------------------------
+//---------------------------  POL4  -----------------------------------
+
+// Import country boundaries feature collection.
+var dataset = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+// Apply filter where country name equals Argentina.
+var argentina = dataset.filter(ee.Filter.eq('country_na', 'Argentina'));
+// Print the "argentina" object and explore features and properties.
+// There should only be one feature representing Argentina.
+print('Argentina feature collection:', argentina);
+// Convert the Argentina boundary feature collection to a line for map display.
+var argentinaBorder =
+    ee.Image().byte().paint({featureCollection: argentina, color: 1, width: 3});
+// Set map options and add the Argentina boundary as a layer to the map.
+Map.setOptions('SATELLITE');
+Map.centerObject(argentina, 8);
+Map.addLayer(argentinaBorder, null, 'Argentina border');
+//Import the AOI - in un primo momento ci concentriamo sul Poligono-1
+var aoi = ee.FeatureCollection('users/AlFe/Pol4_REL-URB-AGR-FOREST-WB')
+Map.addLayer(aoi, {color: 'white', strokeWidth: 5}, 'AOI', true, 0.6);
+Map.centerObject(aoi, 10);
+
+//////////////////////////////////////////////////////
+// Define dates
+var start = ee.Date('2019-09-01');
+var end = ee.Date ('2020-05-31');
+
+//Funzione per ricavare NDVI e poterlo aggiungere come banda addizionale alle immagini
+function addnd(input) {
+  var nd = input.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return input.addBands(nd);
+}
+var ndvi_palette = 'FFFFFF, CE7E45, DF923D, F1B555, FCD163, 99B718, 74A901, 66A000, 529400, ' + '3E8601, 207401, 056201, 004C00, 023B01, 012E01, 011D01, 011301';
+
+
+//function that adds the NDWI as a new band to the image
+//var ndwiViz = {min: 0.5, max: 1, palette: ['00FFFF', '0000FF']};
+function addndwi(input) {
+  var ndwi = input.normalizedDifference(['B3', 'B8']).rename('NDWI');
+  return input.addBands(ndwi);
+}
+var ndwi_palette = 'ff3f06, f0ff06, 08ff26, 0afff4, 0625ff';
+
+
+// Import S2 TOA reflectance and corresponding cloud probability collections.
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 1)
+  .filterMetadata('MGRS_TILE', 'equals', '20JLL') // necessario evitare tiles 20JML che coprono solo parzialmente la zona di interesse
+  .filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', 110))
+  .map(addnd)
+  .map(addndwi)
+  .filterBounds(aoi)
+  .filterDate(start, end)
+  //.map(function(image){return image.clip(aoi)}) ;
+print(s2, "S2 collection")
+
+//Add image and visualization
+//var selected_image = ee.Image(listOfImages.get(0))
+//print(selected_image)
+//Map.addLayer(selected_image, {bands: 'B4,B3,B2', min: 300, max: 2500}); // selected image for canny edge detection
+
+//var vis = {"opacity":1,"bands":["B4","B3","B2"],"min":-433.8386769876429,"max":2822.7077530529555,"gamma":1};
+
+//var ndvi = image.normalizedDifference(['B8', 'B4']);
+//var NDVI = image.select("NDVI")
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////
+//________________ Edge Detection  ____________________________________________
+
+// function to Apply a Canny edge detector at each NDVI image of s2Mosaic collection
+
+var canny_NDVI = function(image) { 
+ return ee.Algorithms.CannyEdgeDetector({
+  image: image.select("NDVI"),
+  threshold: 0.25,    // con NDWI porre 0.2 per singola immagine e 0.3 per multi
+  sigma: 1.9
+  }).multiply(255);
+}
+var canny_collection_NDVI = s2.map(canny_NDVI)
+print(canny_collection_NDVI,'canny_collection_NDVI')
+
+// function to Apply a Canny edge detector at each B2 image of s2Mosaic collection
+
+var canny_B2 = function(image) { 
+ return ee.Algorithms.CannyEdgeDetector({
+  image: image.select("B2"),
+  threshold: 180,    // con NDWI porre 0.2 per singola immagine e 0.3 per multi
+  sigma: 3.8
+  })//.multiply(255);
+}
+var canny_collection_B2 = s2.map(canny_B2)
+print(canny_collection_B2,'canny_collection_B2')
+
+// function to Apply a Canny edge detector at each NDWI image of s2Mosaic collection
+
+var canny_NDWI = function(image) { 
+ return ee.Algorithms.CannyEdgeDetector({
+  image: image.select("NDWI"),
+  threshold: 0.17,    // con NDWI porre 0.2 per singola immagine e 0.3 per multi
+  sigma: 1.85
+  }).multiply(255);
+}
+var canny_collection_NDWI = s2.map(canny_NDWI)
+print(canny_collection_NDWI,'canny_collection_NDWI')
+
+//Merge collections of Canny images
+var canny_stack = canny_collection_NDVI.merge(canny_collection_NDWI)//.merge(canny_collection_B2)
+print(canny_stack,'canny_stack')
+
+
+//In order to overlay all the canny images applying a simple sum all the bands to be summed must 
+//have the same name hence we define a function to rename all the bands of the merged collection 
+//with the same name, as follows:
+
+var canny_stack_bands_renaming = function(image) { 
+ return image.rename("canny_edge")
+}
+//rinominiamo le bande di tutte le immagini nello stack
+var canny_stack_renamed = canny_stack.map(canny_stack_bands_renaming)
+print(canny_stack_renamed,'canny_stack_renamed')
+
+// Perform Aggregation for canny images
+var canny_combo_overlayed = canny_stack_renamed.sum();
+print(canny_combo_overlayed,'canny_combo_overlayed (boolean sum of all canny images')
+Map.addLayer(canny_combo_overlayed.updateMask(canny_combo_overlayed), {min: 0, max: 1, palette: 'white'}, 'canny_combo_overlayed');
+//Map.addLayer(canny_combo_overlayed, {}, 'canny_combo_overlayed');
+
+
+//-----------------Mascheratura con soglia NDVI su composito di tutte le immagini disponibili con maschera nuvole-------------------
+
+// Import S2 BOA reflectance.
+
+// Import S2 TOA reflectance and corresponding cloud probability collections.
+var s2_all_clouds = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 1)
+  .filterMetadata('MGRS_TILE', 'equals', '20JLL') // necessario evitare tiles 20JML che coprono solo parzialmente la zona di interesse
+  .filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', 110))
+  .map(addnd)
+  .filterBounds(aoi)
+  .filterDate(start, end)
+  //.map(function(image){return image.clip(aoi)}) ;
+print(s2_all_clouds, "S2 s2_all_clouds")
+
+var s2c = ee.ImageCollection('COPERNICUS/S2_CLOUD_PROBABILITY')
+  .filterBounds(aoi)
+  .filterDate(start, end)
+  .map(function(image){return image.clip(aoi)}) ;
+//Nota: non è possibile filtrare le S2_CLOUD_PROB con il nome della tile come
+//nel caso delle S2_SR in quanto i metadati del prodotto S2_CLOUD_PROB
+//non riportano il nome della tile. Ho quindi ovviato estraendo il poligono della tile
+//di interesse (da S2Grid.KML) e filtrando questo prodotto entro questa AOI.
+print(s2c, "cloud probability collection")
+
+
+// Define a function to join the two collections on their 'system:index'
+// property. The 'propName' parameter is the name of the property that
+// references the joined image.
+function indexJoin(colA, colB, propName) {
+  var joined = ee.ImageCollection(ee.Join.saveFirst(propName).apply({
+    primary: colA,
+    secondary: colB,
+    condition: ee.Filter.equals(
+        {leftField: 'system:index', rightField: 'system:index'})
+    
+  }));
+    // Merge the bands of the joined image.
+  return joined.map(function(image) {
+    return image.addBands(ee.Image(image.get(propName)));
+  });
+}
+
+// Define a function to create a cloud masking function.
+function buildMaskFunction(cloudProb) {
+  return function(img) {
+    // Define clouds as pixels having greater than the given cloud probability.
+    var cloud = img.select('probability').gt(ee.Image(cloudProb));
+
+    // Apply the cloud mask to the image and return it.
+    return img.updateMask(cloud.not());
+  };
+}
+
+// Join the cloud probability collection to the TOA reflectance collection.
+var withCloudProbability = indexJoin(s2, s2c, 's2_with_cloud_probability');
+
+// Map the cloud masking function over the joined collection, select only the
+// reflectance bands.
+var maskClouds = buildMaskFunction(40);
+print(maskClouds)
+var s2Masked = ee.ImageCollection(withCloudProbability.map(maskClouds))
+                   //.select(ee.List.sequence(0,16))
+print(s2Masked,"s2 Masked")
+
+
+
+var NDVI_collection = s2Masked.select(['NDVI']);
+print(NDVI_collection,'NDVI collection')
+//var NDVI = ee.FeatureCollection(NDVI.map(mapfunc));
+var reducer1 = ee.Reducer.mean();
+
+var reducers = reducer1.combine({reducer2: ee.Reducer.median(), sharedInputs: true})
+                       .combine({reducer2: ee.Reducer.max(), sharedInputs: true})
+                       .combine({reducer2: ee.Reducer.min(), sharedInputs: true})
+                       .combine({reducer2: ee.Reducer.stdDev(), sharedInputs: true});
+
+var results = NDVI_collection.reduce(reducers)
+
+print(results,'stat_col');
+
+//Map.addLayer(ee.Image(results), {bands: 'NDVI_mean', min:-0.1, max:1.0, palette:ndvi_palette},'NDVI_mean');
+//Map.addLayer(ee.Image(results), {bands: 'NDVI_median', min:-0.1, max:1.0, palette:ndvi_palette},'NDVI_median');
+//Map.addLayer(ee.Image(results), {bands: 'NDVI_max', min:-0.1, max:1.0, palette:ndvi_palette},'NDVI_max');
+//Map.addLayer(ee.Image(results), {bands: 'NDVI_min', min:-0.1, max:1.0, palette:ndvi_palette},'NDVI_min');
+//Map.addLayer(ee.Image(results), {bands: 'NDVI_stdDev', min:-0.1, max:1.0, palette:ndvi_palette},'NDVI_stdDev');
+
+
+var NDVI_thresh_mask50 = results.select('NDVI_max').lte(0.50)
+print(NDVI_thresh_mask50,'NDVI_thresh_mask_50%');
+var visParams = {bands: ['NDVI_max'], min:0,max:1}
+//Map.addLayer(NDVI_thresh_mask, visParams, 'NDVI_thresh_mask')
+Map.addLayer(NDVI_thresh_mask50.updateMask(NDVI_thresh_mask50), {min: 0, max: 1, palette: 'white'}, 'NDVI_thresh_mask (50%)');
+
+var NDVI_thresh_mask40 = results.select('NDVI_max').lte(0.40)
+print(NDVI_thresh_mask40,'NDVI_thresh_mask_40');
+Map.addLayer(NDVI_thresh_mask40.updateMask(NDVI_thresh_mask40), {min: 0, max: 1, palette: 'white'}, 'NDVI_thresh_mask (40%)');
+
+/*
+var wh_mask =  compositeA.select(['W21_mask']).toFloat();
+var background = 0;
+var im_back =  ee.Image(background).clip(area).rename('W21_mask').toFloat();
+var binary = ee.ImageCollection([im_back,wh_mask]).mosaic();
+*/
+/////////////////////////////////////////////////////////////////////////////
+//--------------------Downloads (Export to Google Drive)--------------------------
+
+var dl_geometry = canny_collection_NDVI.geometry();
+Map.addLayer(dl_geometry, {color: 'white', strokeWidth: 5}, 'dl_geometry', true, 0.6);
+
+
+var RGBimg = ee.Image(listOfImages.get(10))//,{bands: 'B4,B3,B2', min: 300, max: 2500};
+//print("rgb",imageRGB);
+
+
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
