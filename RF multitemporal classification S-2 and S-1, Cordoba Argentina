@@ -1,0 +1,266 @@
+//----------- RF Multitemporal classification with Sentinel-2 and Sentinel-1 acquisitions-----------------------
+//------------------------- VERANO 2020-----------------------------
+//--------- Cordoba periurban agricultural area POL4  --------------
+
+//1.------ Importazione e visualizzazione dei dati -----
+
+// Import country boundaries feature collection.
+var dataset = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+
+// Apply filter where country name equals Argentina.
+var argentina = dataset.filter(ee.Filter.eq('country_na', 'Argentina'));
+
+// Print the "argentina" object and explore features and properties.
+// There should only be one feature representing Argentina.
+print('Argentina feature collection:', argentina);
+
+// Convert the Argentina boundary feature collection to a line for map display.
+var argentinaBorder =
+    ee.Image().byte().paint({featureCollection: argentina, color: 1, width: 3});
+
+// Set map options and add the Argentina boundary as a layer to the map.
+Map.setOptions('SATELLITE');
+Map.centerObject(argentina, 8);
+Map.addLayer(argentinaBorder, null, 'Argentina border');
+
+//Import the AOI
+var aoi = ee.FeatureCollection('users/AlFe/Pol4_REL-URB-AGR-FOREST-WB')
+Map.addLayer(aoi, {color: 'white', strokeWidth: 5}, 'AOI', true, 0.6);
+Map.centerObject(aoi, 10);
+
+//////////////////////////////////////////////////////
+// Define dates
+var start = ee.Date('2019-09-01');
+var end = ee.Date ('2020-05-31');
+
+//Funzione per ricavare NDVI e poterlo aggiungere come banda addizionale alle immagini
+var ndvi_palette = 'FFFFFF, CE7E45, DF923D, F1B555, FCD163, 99B718, 74A901, 66A000, 529400, ' + '3E8601, 207401, 056201, 004C00, 023B01, 012E01, 011D01, 011301';
+function addnd(input) {
+  var nd = input.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return input.addBands(nd);
+}
+
+//function that adds the NDWI as a new band to the image
+//var ndwiViz = {min: 0.5, max: 1, palette: ['00FFFF', '0000FF']};
+function addndwi(input) {
+  var ndwi = input.normalizedDifference(['B3', 'B8']).rename('NDWI');
+  return input.addBands(ndwi);
+}
+var ndwi_palette = 'ff3f06, f0ff06, 08ff26, 0afff4, 0625ff';
+
+
+// Import S2 TOA reflectance and corresponding cloud probability collections.
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterMetadata('CLOUDY_PIXEL_PERCENTAGE', 'less_than', 20)
+  .filterMetadata('MGRS_TILE', 'equals', '20JLL') // necessario evitare tiles 20JML che coprono solo parzialmente la zona di interesse
+  .filter(ee.Filter.eq('SENSING_ORBIT_NUMBER', 110))
+  .map(addnd)
+  .map(addndwi)
+  .filterBounds(aoi)
+  .filterDate(start, end)
+  //.map(function(image){return image.clip(aoi)}) ;
+print(s2, "S2 collection")
+ 
+
+// Load Sentinel-1 C-band SAR Ground Range collectione (log scale, VV, descending)
+var collectionVV = ee.ImageCollection('COPERNICUS/S1_GRD')
+.filter(ee.Filter.eq('instrumentMode','IW')) //Interferometric wide swath mode
+.filter(ee.Filter.listContains('transmitterReceiverPolarisation','VV'))
+.filter(ee.Filter.eq('orbitProperties_pass','DESCENDING'))
+.filterMetadata('resolution_meters','equals',10)
+.filterMetadata('relativeOrbitNumber_start','equals',112)
+.filterBounds(aoi)
+.filterDate(start, end)
+.select('VV')
+//.map(function(image){return image.clip(aoi)})
+print(collectionVV,'Collection VV');
+
+// Load Sentinel-1 C-band SAR Ground Range collectione (log scale, VH, descending)
+var collectionVH = ee.ImageCollection('COPERNICUS/S1_GRD')
+.filter(ee.Filter.eq('instrumentMode','IW')) //Interferometric wide swath mode
+.filter(ee.Filter.listContains('transmitterReceiverPolarisation','VH'))
+.filter(ee.Filter.eq('orbitProperties_pass','DESCENDING'))
+.filterMetadata('resolution_meters','equals',10)
+.filterMetadata('relativeOrbitNumber_start','equals',112)
+.filterBounds(aoi)
+.filterDate(start, end)
+.select('VH')
+//.map(function(image){return image.clip(aoi)})
+print(collectionVH,'Collection VH');
+
+
+//Merge VV and VH collections
+var collection_VV_VH = collectionVV.merge(collectionVH)
+print(collection_VV_VH,'merged collection')
+
+//Merge S2 and S1 collections
+
+var S1_S2_collection = s2.merge(collection_VV_VH)
+print(S1_S2_collection,'S1_S2_collection')
+
+
+/*
+////////////////////////////////////////////////////////////////////////////////////////////////////
+--------------------------- N.B. -----------------------------------------------
+Non si effettua mascheratura delle nuvole e in questo caso non è necessario mosaicare le tiles
+*/
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+/**
+ * :::::SCELTA DEL SET DI FEATURES DA DARE IN INPUT AL CLASSIFICATORE RF:::::::::::::
+*/
+var B2_B12_col = s2.select('B2','B3','B4','B5','B6','B7','B8','B8A','B11','B12','NDVI','NDWI');
+print(B2_B12_col,'Tutte le bande da 10m e 20m')
+var B2_B12_VV_VH_collection = B2_B12_col.merge(collection_VV_VH)
+print(B2_B12_VV_VH_collection,'B2_B12_VV_VH_collection')
+// This function adds a band representing the image timestamp.
+var addTime = function(B2_B12_VV_VH_collection) {
+  return  B2_B12_VV_VH_collection.addBands(image.metadata('system:time_start')
+    // Convert milliseconds from epoch to years to aid in
+    // interpretation of the following trend calculation.
+    .divide(1000 * 60 * 60 * 24 * 365));
+};
+var  B2_B12_VV_VH_stacked = B2_B12_VV_VH_collection.toBands()
+print(B2_B12_VV_VH_stacked,'B2_B12_VV_VH_stacked')
+var band_list = B2_B12_VV_VH_stacked.bandNames(); //lista di tutte le bande dello stack di immagini convertito in insieme di bande
+print(band_list,'B2_B12_VV_VH_stacked_list');
+var imageCl = B2_B12_VV_VH_stacked.select(band_list); //selezione di features in input ai classificatori
+print(imageCl,'imageCl B2_B12_VV_VH');
+
+////////////////////////////////////////////////////////////////////////////////////////////////
+/** IMPORTAZIONE DEI FILE CSV CONTENENTI IL DATASET DI TRAINING E QUELLO DI VALIDAZIONE
+ */
+// Import ground truth data that are divided into training and validation sets.
+var trainingPts = ee.FeatureCollection(
+    'users/AlFe/pol4_training_verano');
+var validationPts = ee.FeatureCollection(
+    'users/AlFe/pol4_validation_verano');
+    
+    print('Pol4-verano training points:', trainingPts);
+    print('Pol4-verano validation points:', validationPts);
+
+// Display training and validation points to see distribution within the AOI.
+Map.addLayer(trainingPts, {color: 'green'}, 'Training points');
+Map.addLayer(validationPts, {color: 'yellow'}, 'Validation points');
+
+/////////----------TRAINING DEL CLASSIFICATORE RF----------////////////////////////
+///////---ESTRAZIONE TRAINING FEATURES DAI PUNTI CLASSIFICATI---////////////
+// Overlay the training points on the imagery to get a training sample; include
+// the crop classification property ('class') in the sample feature collection.
+var training = imageCl
+                   .sampleRegions({
+                     collection: trainingPts,
+                     properties: ['class'],
+                     scale: 20,
+                     tileScale: 8
+                   })
+                 //.filter(ee.Filter.neq('B1', null)); // Remove null pixels.
+                 
+// Train a random forest classifier with default parameters.
+var trainedRf = ee.Classifier.smileRandomForest({numberOfTrees:500}).train({
+  features: training,
+  classProperty: 'class',
+  inputProperties: band_list});
+var classifiedRf = imageCl.select(band_list).classify(trainedRf)
+
+// Define visualization parameters for classification display.
+var classVis = {min: 0, max: 2, palette: ['228B22', '0000FF','EEE8AA']};
+
+// Add the output of the training classification to the map.
+//Map.addLayer(classifiedCart.clipToCollection(aoi), classVis, 'Classes (CART)');
+Map.addLayer(classifiedRf, classVis, 'Classes (RF)')
+
+// Calculate the training error matrix and accuracy for both classifiers by
+// using the "confusionMatrix" function to generate metrics on the
+// resubstitution accuracy.
+//var trainAccuracyCart = trainedCart.confusionMatrix();
+var trainAccuracyRf = trainedRf.confusionMatrix();
+
+// Print model accuracy results.
+print('##### TRAINING ACCURACY #####');
+//print('CART: overall accuracy:', trainAccuracyCart.accuracy());
+print('RF: overall accuracy:', trainAccuracyRf.accuracy());
+//print('CART: error matrix:', trainAccuracyCart);
+print('RF: error matrix:', trainAccuracyRf);
+
+
+/////////----------VALIDAZIONE DEL CLASSIFICATORE RF----------////////////////////////
+///////---ESTRAZIONE VALIDATION FEATURES DAI PUNTI CLASSIFICATI---////////////
+/*
+c. To assess the reliability of the classification outputs, use the validationPts dataset 
+(imported previously) to extract spectral information from the mosaic image bands. You will 
+further apply ee.Filter.neq on the "B1" band to remove pixels with null value, and predict 
+the classified values for the validationPts pixels based on the trained models. Note that 
+accuracy assessment is conducted for each classifier.
+*/
+// Extract band pixel values for validation points.
+var validation = imageCl
+                     .sampleRegions({
+                       collection: validationPts,
+                       properties: ['class'],
+                       scale: 20,
+                       tileScale: 8
+                     })
+                     //.filter(ee.Filter.neq('B1', null)); // Remove null pixels.
+
+// Classify the validation data.
+//var validatedCart = validation.classify(trainedCart);
+var validatedRf = validation.classify(trainedRf);
+
+// Calculate the validation error matrix and accuracy for both classifiers by
+// using the "confusionMatrix" function to generate metrics on the
+// resubstitution accuracy.
+
+//var validationAccuracyCart =
+ //   validatedCart.errorMatrix('class', 'classification');
+var validationAccuracyRf = validatedRf.errorMatrix('class', 'classification');
+
+// Print validation accuracy results.
+print('##### VALIDATION ACCURACY #####');
+print('##### VALIDATION ACCURACY #####');
+print('RF: error matrix: ', validationAccuracyRf);
+print('RF: overall accuracy: ', validationAccuracyRf.accuracy());
+// Calculate kappa statistic.
+print('Kappa statistic', validationAccuracyRf.kappa());
+// Calculate consumer's accuracy, also known as user's accuracy or
+// specificity and the complement of commission error (1 − commission error).
+print("User's accuracy ( 1- Commision Error)", validationAccuracyRf.consumersAccuracy());
+// Calculate producer's accuracy, also known as sensitivity and the
+// compliment of omission error (1 − omission error).
+print("Producer's accuracy (1 - Omission Error)", validationAccuracyRf.producersAccuracy());
+
+// ---------Calculate area of each class (based on RF) in square meters.-------------
+var areaImage = ee.Image.pixelArea().addBands(classifiedRf);
+var areas = areaImage.reduceRegion({
+  reducer: ee.Reducer.sum().group({
+    groupField: 1,
+    groupName: 'class',
+  }),
+  geometry: aoi.geometry(),
+  scale: 500,
+  maxPixels: 1e13,
+  tileScale: 8
+});
+
+
+// Print the area calculations.
+print('##### CLASS AREA SQ. METERS #####');
+print(areas);
+
+
+var dl_geometry = s2.geometry();
+Map.addLayer(dl_geometry, {color: 'white', strokeWidth: 5}, 'dl_geometry', true, 0.6);
+
+/*
+//-------------------DOWNLOAD MAPPA CLASSIFICAZIONE-----------------------------
+
+Export.image.toDrive({
+  image: classifiedRf,
+  description: 'pol4_cc_B2_B12_verano_cl020_tile',
+  scale: 10,
+  maxPixels: 1e13,
+  //region: aoi,
+  region: dl_geometry,
+  folder: 'CROP_CLASSIFICATION_MAPS_ARGENTINA',
+  fileNamePrefix: 'pol4_cc_B2_B12_verano_cl020_tile'
+});
+*/
