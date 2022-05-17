@@ -1,0 +1,184 @@
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+# -*- coding: utf-8 -*-
+"""
+Segmentazione Cordoba, Argentina
+
+Created on Mon May  2 11:10:49 2022
+
+@author: ferra
+"""
+
+# %% Import Libraries
+from time import time
+t_start = time()
+import os
+os.chdir(r"C:\Users\ferra\Desktop\Lavoro_&_Studio\Assegno Ricerca Sapienza\Argentina\CROP_CLASSIFICATION_MAPS_ARGENTINA\Segmentazione")
+
+from matplotlib import pyplot as plt
+from PIL import Image
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+import skimage
+from scipy import ndimage
+import matplotlib
+import numpy as np
+import argparse
+import imutils
+import cv2 as cv
+import GeoTools  #--- Library author: Valerio Pampanoni  -- useful to read and write georeferencing information for the processed images ---
+
+
+name='Cordoba'
+
+ee_canny_edge_detection_path=(r"Cordoba_canny_combo_overlayed_NDVI_NDWI_10m_tile.tif")
+ee_ndvi_mask_path=(r"NDVI_040thresh_mask_Cordoba_tile.tif")
+
+
+#Opzione di apertura dell'immagine con readGeoRaster.
+georaster = GeoTools.readGeoRaster(ee_canny_edge_detection_path)
+canny = georaster.array
+georef_info = GeoTools.get_gdal_geotransform(ee_canny_edge_detection_path)
+
+georaster_NDVI = GeoTools.readGeoRaster(ee_ndvi_mask_path) 
+NDVImask = georaster_NDVI.array
+NDVImask[NDVImask == 1] = 255
+#georef_info = GeoTools.get_gdal_geotransform(georaster_mask)
+
+
+thresh = cv.threshold(canny, 0, 255,
+cv.THRESH_BINARY_INV | cv.THRESH_OTSU)[1]
+#cv.imshow("Thresh", thresh)
+#cv.waitKey(0)
+
+#per procedere con skeletonization usare la threshold inversa
+thresh_inv = cv.threshold(canny, 0, 255,
+cv.THRESH_BINARY | cv.THRESH_OTSU)[1]
+
+#thresh_img = Image.fromarray(thresh)
+#thresh_img.save("thresh.tif")
+thresh_georef = georaster
+thresh_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+thresh_georef.array = thresh
+GeoTools.writeGeoRaster(thresh_georef, name+ '_thresh_georef.tif')
+
+#Calcoliamo la maschera sovrapponendo l'edge detection scheletonizzata e la maschera di NDVI threshold
+#Facciamo l'or binario (somma di immagini binarie) della immagine di edges canny e la maschera fatta con soglia NDVI
+finalMask = np.copy(thresh)
+finalMask[NDVImask == 255] = 0
+finalMask_georef = georaster
+finalMask_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+finalMask_georef.array = finalMask
+GeoTools.writeGeoRaster(finalMask_georef,  name+ '_final_mask.tif')
+
+#riempiamo i buchi della maschera
+finalMask_filled=ndimage.binary_fill_holes(finalMask, structure=np.ones((3,3))).astype(int)
+finalMask_filled_georef = georaster
+finalMask_filled_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+finalMask_filled_georef.array = finalMask_filled
+GeoTools.writeGeoRaster(finalMask_filled_georef,  name+ '_final_mask_filled.tif')
+
+#invertiamo in bordi neri, aree bianche
+finalMask_inv=np.copy(finalMask_filled)
+finalMask_inv[finalMask_filled == 0] = 1
+finalMask_inv[finalMask_filled == 1] = 0
+finalMask_inv_georef = georaster
+finalMask_inv_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+finalMask_inv_georef.array = finalMask_inv
+GeoTools.writeGeoRaster(finalMask_inv_georef,  name+ '_final_mask_inv.tif')
+
+#riempiamo i buchi neri dovuti a rimore o bordi non ben definiti
+finalMask_inv_filled=ndimage.binary_fill_holes(finalMask_inv, structure=np.ones((3,3))).astype(int)
+finalMask_inv_filled_georef = georaster
+finalMask_inv_filled_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+finalMask_inv_filled_georef.array = finalMask_inv_filled
+GeoTools.writeGeoRaster(finalMask_inv_filled_georef,  name+ '_final_mask_inv_filled.tif')
+
+#invertiamo in bordi neri, aree bianche
+finalMask_filled_filled =np.copy(finalMask_inv_filled)
+finalMask_filled_filled[finalMask_inv_filled == 0] = 1
+finalMask_filled_filled[finalMask_inv_filled == 1] = 0
+finalMask_filled_filled_georef = georaster
+finalMask_filled_filled_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+finalMask_filled_filled_georef.array = finalMask_filled_filled
+GeoTools.writeGeoRaster(finalMask_filled_filled_georef,  name+ '_final_mask_filled_filled.tif')
+
+# distance_transform_edt compute the exact Euclidean distance from
+# every binary pixel to the nearest zero pixel, then we find local
+# peaks in this distance map
+
+distance = ndimage.distance_transform_edt(finalMask_filled)
+#cv.imshow("Distance Map", distance)
+#cv.waitKey(0)
+plt.figure()
+plt.imshow(-distance, interpolation = 'none')
+plt.axis('off')
+plt.title('distance map')
+
+#we take D , our distance map, and find peaks (i.e., local maxima)
+#in the map. We’ll ensure that is at least a 20 pixel distance between
+#each peak.
+localMax = peak_local_max(distance,indices = False, min_distance=10, labels = finalMask_filled)
+
+#cv.imshow("Distance Map", localMax)
+#cv.waitKey(0)
+# plt.figure()
+# plt.imshow(localMax, interpolation = 'none')
+# plt.axis('off')
+# plt.title('localMax map 10pixel')
+
+
+# perform a connected component analysis on the local peaks,
+# using 8-connectivity, then appy the Watershed algorithm
+markers = ndimage.label(localMax, structure=np.ones((3, 3)))[0]
+#plt.figure()
+#plt.imshow(markers, interpolation = 'none')
+#plt.axis('off')
+#plt.title('markers')
+markers_normalized = cv.normalize(markers, None, 0, 255, cv.NORM_MINMAX)
+markers_8bit = np.uint8(markers_normalized)
+# cv.imshow('markers', markers_8bit)
+# cv.waitKey(0)
+markers_8bit_img = Image.fromarray(markers_8bit)
+#markers_8bit_img.save("markers_8bit.tif")
+markers_georef = georaster
+markers_georef.nodata = np.uint8(10) #poniamo nodata value uguale a qualsiasi numero diverso da 0 o 255
+markers_georef.array = markers
+GeoTools.writeGeoRaster(markers_georef,  name+ '_markers_10pixel_filled.tif')
+
+#The output of this function gives us our markers which we then feed
+#into the watershed function.
+# Since the watershed algorithm assumes our markers represent local
+#minima (i.e., valleys) in our distance map, we take the negative
+#value of Distance
+labels = watershed(-distance, markers, mask=finalMask_filled)#, compactness=1)
+print("[INFO] {} unique segments found".format(len(np.unique(labels)) - 1))
+
+
+labels_normalized = cv.normalize(labels, None, 0, 255, cv.NORM_MINMAX)
+labels_8bit = np.uint8(labels_normalized)
+# cv.imshow('input watershed', labels_8bit)
+# cv.waitKey(0)
+labels_8bit_img = Image.fromarray(labels_8bit)
+#labels_8bit_img.save("labels_8bit.tif")
+#print_gdal_info("labels_8bit.tif")
+
+# georaster.array = labels_8bit
+# georaster.nodata = np.uint8(0)
+# GeoTools.writeGeoRaster(georaster,  name+ '_WS_10_pixel_cannymask_filled.tif')
+georaster.npdtype=np.uint16
+georaster.array = labels.astype(np.uint16)
+georaster.nodata = np.uint16(0)
+GeoTools.writeGeoRaster(georaster,  name+ '_WS_10_pixel_cannymask_filled.tif')
+# show the output image
+# cv.imshow("Output", thresh)
+# cv.waitKey(0)
+
+t_end = time()
+elapsed_time = t_end-t_start
+print("Elapsed time is %f seconds." %elapsed_time)
