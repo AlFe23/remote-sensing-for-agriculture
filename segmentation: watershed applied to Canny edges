@@ -1,9 +1,9 @@
 
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 licensed under the GNU General Public License v3.0
 https://github.com/AlFe23/remote-sensing-for-agriculture
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 # -*- coding: utf-8 -*-
 """
@@ -182,3 +182,8 @@ GeoTools.writeGeoRaster(georaster,  name+ '_WS_10_pixel_cannymask_filled.tif')
 t_end = time()
 elapsed_time = t_end-t_start
 print("Elapsed time is %f seconds." %elapsed_time)
+
+
+
+licensed under the GNU General Public License v3.0
+https://github.com/AlFe23/remote-sensing-for-agriculture
