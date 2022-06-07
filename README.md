@@ -1,2 +1,2 @@
 # remote-sensing-for-agriculture
-I wrote these algorithms for the optimal classification of culture type and segmentation of agricultural fields. Some developed in Javascript for Google Earth Engine and some in Python using functions from openCV and Scikit-image libraries. Reading and writing GeoTiff images is done using functions from the GeoRaster Library by Valerio Pampanoni
+Optimal segmentation of agricultural fields and crop classification. Some developed in Javascript for Google Earth Engine and some in Python using openCV and Scikit-image libraries. Reading and writing GeoTiff images is done using functions from the GeoRaster Library by Valerio Pampanoni.
